@@ -11,22 +11,6 @@ load_dotenv()
 
 api_key = os.getenv("GEMINI_API_KEY")
 
-def load_data(file_source):
-    with open("data.csv", "rb") as f:
-        data = plistlib.load(f)
-
-    html_bytes = data["WebMainResource"]["WebResourceData"]
-
-    html = html_bytes.decode("utf-8", errors="ignore")
-
-    soup = BeautifulSoup(html, "html.parser")
-
-    csv_text = soup.find("pre").text
-
-    return pd.read_csv(io.StringIO(csv_text))
-
-df = load_data("data.csv")
-
 client = genai.Client(api_key=api_key)
 
 def extract_schema(df):
@@ -84,10 +68,11 @@ def build_prompt(schema, user_query):
     {{
         "reasoning": "Brief explanation of the logic used.",
         "pandas_code": "The exact python code to transform the dataframe 'df' into the required result set.",
-        "chart_type": "one of ['bar', 'line', 'pie', 'scatter', 'table']",
+        "chart_type": "one of ['bar', 'line', 'pie', 'scatter']",
         "chart_config": {{
             "x": "column_name_for_x_axis",
             "y": "column_name_for_y_axis",
+            "color": "column_name_for_grouping_or_breakdown (return null if not applicable)",
             "title": "A descriptive title"
         }}
     }}
@@ -95,18 +80,23 @@ def build_prompt(schema, user_query):
     CONSTRAINTS:
     - Use only the dataframe named 'df'.
     - Ensure 'pandas_code' results in a variable named 'result_df'.
+    - If the X-axis represents time (months, days, years), the pandas_code MUST sort the dataframe chronologically before returning result_df and If you group by month names, you must ensure the final table is sorted by chronological calendar order, not alphabetically.
     - If the query cannot be answered, return {{"error": "reason"}}.
+    - Explicitly filter the dataframe first if the user asks for a specific timeframe (e.g., 'H1', 'Q4', '2023').
+    - If calculating averages, counts, or growth, rename the resulting column in pandas_code so the chart's Y-axis label accurately reflects the metric (e.g., 'average_order_value' instead of 'total_revenue').
+    - If the user asks a direct question (e.g., "Which region is worst?"), ensure the answer is clearly stated in the "reasoning" JSON field.
     """
 
     return prompt
 
 
-def model_r():
-    schema = extract_schema(df)
-    prompt = build_prompt(schema,"give me monthly revenu of q4")
+def model_r(dataframe, user_query="What is the q3 revenue each month"):
+    schema = extract_schema(dataframe)
+    prompt = build_prompt(schema,user_query)
 
     response = client.models.generate_content(
-            model="gemini-2.5-flash", contents=prompt
+            model="gemini-3.1-flash-lite-preview", 
+            contents=prompt
     )
 
     text = response.text.strip()
